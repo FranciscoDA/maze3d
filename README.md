@@ -9,7 +9,7 @@ Interactive clone of Windows 3D Maze screensaver. Written in rust + raylib.
 
 ## Running
 
-`./target/debug/
+`./target/debug/`
 
 ## Controls
 
