@@ -3,7 +3,7 @@ use crate::{
     dfs::random_dfs,
     entities::{Entity, EntityManager},
     events::GameEventType,
-    map::{GetSetMap, Map, MapSlice, RectangularMap, WALL_EAST, WALL_NORTH, WALL_SOUTH, WALL_WEST},
+    map::{GetSetMap, Map, RectangularMap, WALL_EAST, WALL_NORTH, WALL_SOUTH, WALL_WEST},
 };
 use rand::seq::SliceRandom;
 use raylib::ffi::atan2f;
@@ -19,15 +19,14 @@ pub struct GameState {
 
     pub game_start_event: Option<GameEventType>,
     pub game_end_event: Option<GameEventType>,
+    pub roll_events: Vec<GameEventType>,
 }
 
 impl GameState {
     pub fn new(clock: f64, map_dimensions: [usize; 2]) -> Self {
         let mut map = Map::<2>::from(WALL_EAST | WALL_NORTH | WALL_WEST | WALL_SOUTH, map_dimensions);
         let mut entities = EntityManager::new();
-
-        // Create a random map over a mapslice so that map edges are kept
-        random_dfs(&mut MapSlice::from(&mut map, [1, 1], [9, 9]), [0, 0]);
+        random_dfs(&mut map, [0, 0]);
 
         // Find all free tiles where we can put game objects
         let mut free_tiles = Vec::<[usize; 2]>::new();
@@ -65,10 +64,17 @@ impl GameState {
             let (x, z) = (entity_col as f32 * TILE_SIZE, entity_row as f32 * TILE_SIZE);
             let entity = if entities.len() < 3 {
                 Entity::Rat {
+                    id: entities.generate_id(),
                     position: Vector3::new(x, 0.5, z) + map_offset,
                 }
             } else if entities.len() < 5 {
                 Entity::OpenGL {
+                    id: entities.generate_id(),
+                    position: Vector3::new(x, 1.5, z) + map_offset,
+                }
+            } else if entities.len() < 9 {
+                Entity::Dodecahedron {
+                    id: entities.generate_id(),
                     position: Vector3::new(x, 1.5, z) + map_offset,
                 }
             } else {
@@ -77,6 +83,7 @@ impl GameState {
             entities.add(entity);
         }
         let start_banner = Entity::Start {
+            id: entities.generate_id(),
             position: Vector3::new(
                 facing_col as f32 * TILE_SIZE,
                 TILE_SIZE / 2.0,
@@ -84,12 +91,16 @@ impl GameState {
             ) + map_offset,
         };
         let end_banner = Entity::End {
+            id: entities.generate_id(),
             position: Vector3::new(end_col as f32 * TILE_SIZE, TILE_SIZE / 2.0, end_row as f32 * TILE_SIZE)
                 + map_offset,
         };
 
-        let player_position =
-            Vector3::new(start_col as f32 * TILE_SIZE, 2.0, start_row as f32 * TILE_SIZE) + map_offset;
+        let player_position = Vector3::new(
+            start_col as f32 * TILE_SIZE,
+            TILE_SIZE / 2.0,
+            start_row as f32 * TILE_SIZE,
+        ) + map_offset;
         let camera_rotation = Matrix::rotate_y(unsafe {
             atan2f(
                 player_position.x - start_banner.position().x,
@@ -111,6 +122,7 @@ impl GameState {
                 duration: 1.0,
             }),
             game_end_event: None,
+            roll_events: Vec::new(),
         };
     }
 

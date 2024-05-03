@@ -82,6 +82,9 @@ impl<P: TryInto<usize> + Copy, const D: usize> GetSetMap<P, D> for Map<D> {
         })
     }
     fn get_item(&self, position: [P; D]) -> i8 {
+        if !self.contains(position) {
+            return 0;
+        }
         let p = position.map(|v| v.try_into().unwrap_or(0));
         *self.tiles.get(pos2i(&self.dimensions, p)).unwrap_or(&0)
     }
@@ -102,8 +105,11 @@ impl<'a, P: TryInto<usize> + Copy, const D: usize> GetSetMap<P, D> for MapSlice<
         })
     }
     fn get_item(&self, position: [P; D]) -> i8 {
+        if !self.contains(position) {
+            return 0;
+        }
         let p = array::from_fn(|i| position[i].try_into().unwrap_or(0) + self.origin[i]);
-        *self.map.tiles.get(pos2i(&self.map.dimensions, p)).unwrap_or(&0)
+        self.map.get_item(p)
     }
 
     fn set_item(&mut self, position: [P; D], value: i8) {

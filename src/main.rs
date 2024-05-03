@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod constants;
+pub mod debug_ui;
 pub mod dfs;
 pub mod drawable;
 pub mod entities;
@@ -7,24 +8,21 @@ pub mod events;
 pub mod game;
 pub mod input;
 pub mod map;
-pub mod debug_ui;
 
 use crate::{
     assets::AssetPack,
     constants::{
-        MOUSE_SENSITIVITY, PLAYER_RADIUS, PLAYER_SPEED, PLAYER_SPRINT_SPEED, PLAYER_WALK_SPEED, SCREEN_H, SCREEN_W,
+        MOUSE_SENSITIVITY, PI, PLAYER_RADIUS, PLAYER_SPEED, PLAYER_SPRINT_SPEED, PLAYER_WALK_SPEED, SCREEN_H, SCREEN_W,
         TARGET_FPS, TILE_SIZE,
     },
+    debug_ui::{draw_debug_text, draw_xyz_indicator},
     drawable::Drawable,
     entities::Entity,
     events::GameEventType,
     game::GameState,
     input::InputController,
     map::{GetSetMap, WALL_EAST, WALL_NORTH, WALL_SOUTH, WALL_WEST},
-    debug_ui::draw_xyz_indicator,
 };
-use debug_ui::draw_debug_text;
-use map::RectangularMap;
 use raylib::{ffi::asinf, prelude::*};
 use std::ops::Mul;
 
@@ -44,7 +42,7 @@ fn rec_circle_collision_point(rect: &Rectangle, center: Vector2, radius: f32) ->
 fn main() {
     let (mut rl, thread) = raylib::init().size(SCREEN_W, SCREEN_H).title("3d maze").build();
 
-    let mut game = GameState::new(rl.get_time(), [8, 8]);
+    let mut game = GameState::new(rl.get_time(), [5, 5]);
 
     let mut camera = raylib::camera::Camera3D::perspective(
         game.player_position,
@@ -72,7 +70,13 @@ fn main() {
             unsafe { asinf(Vector3::forward().transform_with(game.camera_rotation).normalized().y) };
         let mut translation_velocity = Vector3::zero();
 
-        let player_input_enabed = game.game_start_event.is_none() && game.game_end_event.is_none();
+        let player_input_enabed = game.game_start_event.as_ref().is_none()
+            && game.game_end_event.as_ref().is_none()
+            && !game
+                .roll_events
+                .last()
+                .as_ref()
+                .is_some_and(|e| !e.is_completed(game.clock));
 
         if player_input_enabed {
             translation_velocity += input
@@ -87,15 +91,17 @@ fn main() {
 
             let vertical_rotation_axis = Vector3::left().transform_with(game.camera_rotation);
             let vertical_rotation_angle = input.get_vertical_look_angle(&rl) * 0.05;
+
+            let old_up = Vector3::up().transform_with(game.camera_rotation);
             game.camera_rotation *= Matrix::rotate(vertical_rotation_axis, vertical_rotation_angle);
 
             // constrain vertical rotation to avoid spinning by looking up/down
-            let new_up = Vector3::up().transform_with(game.camera_rotation) * Vector3::up();
+            let new_up = Vector3::up().transform_with(game.camera_rotation);
             game.camera_rotation *= Matrix::rotate(
                 vertical_rotation_axis,
                 vertical_rotation_angle
-                    * if new_up.y < 0.05 && camera.up.y - new_up.y != 0.0 {
-                        (new_up.y - 0.05) / (camera.up.y - new_up.y)
+                    * if new_up.y < 0.05 && old_up.y - new_up.y != 0.0 {
+                        (new_up.y - 0.05) / (old_up.y - new_up.y)
                     } else {
                         0.0
                     },
@@ -125,11 +131,7 @@ fn main() {
                 for j in ((translated_bb.x) / TILE_SIZE) as i32
                     ..((translated_bb.x + translated_bb.width) / TILE_SIZE) as i32 + 1
                 {
-                    if i < 0
-                        || j < 0
-                        || i as usize >= game.map.dimensions()[0]
-                        || j as usize >= game.map.dimensions()[1]
-                    {
+                    if !game.map.contains([i, j]) {
                         continue;
                     }
                     if game.map.get_item([i, j]) & WALL_EAST == WALL_EAST {
@@ -174,7 +176,7 @@ fn main() {
                 )
                 .length_sqr()
             };
-            walls.sort_by( |a, b| (-fdist(a)).total_cmp(&-fdist(b)) );
+            walls.sort_by(|a, b| (-fdist(a)).total_cmp(&-fdist(b)));
             while let Some(wall_bb) = walls.pop() {
                 let translation_velocity2d = Vector2::new(translation_velocity.x, translation_velocity.z);
                 let translated_position2d = player_position2d + translation_velocity2d;
@@ -207,30 +209,82 @@ fn main() {
             game = GameState::new(game.clock, [8, 8]);
             continue;
         }
+        for e in game.roll_events.iter() {
+            if e.is_completed(game.clock) {
+                match e {
+                    GameEventType::Roll { entity_id, .. } => {
+                        game.entities.remove_by_id(*entity_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if game.roll_events.iter().all(|e| e.is_completed(game.clock)) && game.roll_events.len() % 2 == 0 {
+            game.roll_events.clear();
+        }
 
         // Collision vs other entities
-        for e in game.entities.iter() {
-            let player_position2d = Vector2::new(game.player_position.x, game.player_position.z);
-            let entity_position2d = Vector2::new(e.position().x, e.position().z);
-            match e {
-                Entity::End { .. } => {
-                    if check_collision_circles(entity_position2d, e.collision_radius(), player_position2d, PLAYER_RADIUS) {
-                        colliding = true;
-                        if game.game_end_event.is_none() {
+        {
+            let mut i = 0;
+            while i < game.entities.len() {
+                let e = game.entities.get_mut_by_index(i);
+
+                let player_position2d = Vector2::new(game.player_position.x, game.player_position.z);
+                let entity_position2d = Vector2::new(e.position().x, e.position().z);
+
+                let objects_colliding = e.collision_radius() > 0.0
+                    && check_collision_circles(
+                        entity_position2d,
+                        e.collision_radius(),
+                        player_position2d,
+                        PLAYER_RADIUS,
+                    );
+                colliding |= objects_colliding;
+                match e {
+                    Entity::End { .. } => {
+                        if objects_colliding && game.game_end_event.is_none() {
                             game.game_end_event = Some(GameEventType::GameEnd {
-                                start_time: game.clock, duration: 1.0,
+                                start_time: game.clock,
+                                duration: 1.0,
                             });
                         }
                     }
+                    Entity::Dodecahedron { .. } => {
+                        // When colliding with a diamond create a new camera roll event
+                        if objects_colliding {
+                            if game.roll_events.iter().all(|ev| match ev {
+                                GameEventType::Roll { entity_id, .. } => *entity_id != e.id(),
+                                _ => false,
+                            }) {
+                                let new_event = GameEventType::Roll {
+                                    start_time: game.clock,
+                                    duration: 1.0,
+                                    entity_id: e.id(),
+                                };
+                                game.roll_events.push(new_event);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+                i += 1;
             }
         }
 
         game.player_position += translation_velocity;
         camera.position = game.player_position;
         camera.target = game.player_position + Vector3::forward().transform_with(game.camera_rotation);
-        camera.up = Vector3::up().transform_with(game.camera_rotation) * Vector3::up();
+        camera.up = Vector3::up()
+            .transform_with(game.camera_rotation)
+            .transform_with(Matrix::rotate(
+                Vector3::forward().transform_with(game.camera_rotation),
+                game.roll_events
+                    .iter()
+                    .map(|e| e.elapsed_normalized(game.clock) as f32)
+                    .fold(0.0, |a, b| a + b)
+                    * PI,
+            ));
+
         rl.update_camera(&mut camera);
 
         {
@@ -239,10 +293,10 @@ fn main() {
             {
                 let mut d3d = d.begin_mode3D(camera);
                 // draw tile map
-                game.map.draw(&game, &mut d3d, camera, &texture);
+                game.map.draw(&game, &mut d3d, &camera, &texture);
 
                 // Draw entities z-ordered
-                game.entities.sort_by(|a, b| {
+                game.entities.sort_drawables_by(|a, b| {
                     f32::total_cmp(
                         &(b.position() - camera.position).length(),
                         &(a.position() - camera.position).length(),
@@ -255,8 +309,8 @@ fn main() {
                     90.0,
                     if colliding { Color::RED } else { Color::GREEN },
                 );
-                for e in game.entities.iter() {
-                    e.draw(&game, &mut d3d, camera, &texture);
+                for e in game.entities.draw_iter() {
+                    e.draw(&game, &mut d3d, &camera, &texture);
                 }
             }
 

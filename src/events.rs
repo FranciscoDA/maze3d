@@ -1,13 +1,26 @@
 #[derive(PartialEq, PartialOrd)]
 pub enum GameEventType {
-    GameStart { start_time: f64, duration: f64 },
-    GameEnd { start_time: f64, duration: f64 },
+    GameStart {
+        start_time: f64,
+        duration: f64,
+    },
+    GameEnd {
+        start_time: f64,
+        duration: f64,
+    },
+    Roll {
+        start_time: f64,
+        duration: f64,
+        entity_id: usize,
+    },
 }
 
 impl GameEventType {
     pub fn start_time(&self) -> f64 {
         match self {
-            Self::GameStart { start_time, .. } | Self::GameEnd { start_time, .. } => *start_time,
+            Self::GameStart { start_time, .. } | Self::GameEnd { start_time, .. } | Self::Roll { start_time, .. } => {
+                *start_time
+            }
         }
     }
 
@@ -17,6 +30,9 @@ impl GameEventType {
                 start_time, duration, ..
             }
             | Self::GameEnd {
+                start_time, duration, ..
+            }
+            | Self::Roll {
                 start_time, duration, ..
             } => start_time + duration,
         }

@@ -8,36 +8,42 @@ use crate::game::GameState;
 use crate::map::{GetSetMap, Map, RectangularMap, WALL_EAST, WALL_NORTH, WALL_SOUTH, WALL_WEST};
 
 pub trait Drawable<T> {
-    fn draw(&self, game: &GameState, d3d: &mut RaylibMode3D<T>, camera: Camera3D, assets: &AssetPack);
+    fn draw(&self, game: &GameState, d3d: &mut RaylibMode3D<T>, camera: &Camera3D, assets: &AssetPack);
 }
 
 impl<T> Drawable<T> for Entity {
-    fn draw(&self, game: &GameState, d3d: &mut RaylibMode3D<T>, camera: Camera3D, assets: &AssetPack) {
-        //let scale_vector = Vector3::new(1.0, y_axis_scale, 1.0);
-
-        let draw_scaled_billboard = |d3d: &mut RaylibMode3D<T>, tex: &Texture2D, size: f32, color: Color| {
-            let y_axis_scale = if let Some(e) = &game.game_start_event {
-                e.elapsed_normalized(game.clock) as f32
-            } else if let Some(e) = &game.game_end_event {
-                1.0 - e.elapsed_normalized(game.clock) as f32
-            } else {
-                1.0
-            };
-
+    fn draw(&self, game: &GameState, d3d: &mut RaylibMode3D<T>, camera: &Camera3D, assets: &AssetPack) {
+        let y_axis_scale = if let Some(e) = &game.game_start_event {
+            e.elapsed_normalized(game.clock) as f32
+        } else if let Some(e) = &game.game_end_event {
+            1.0 - e.elapsed_normalized(game.clock) as f32
+        } else {
+            1.0
+        };
+        fn draw_billboard_yscaled<T>(
+            entity: &Entity,
+            _game: &GameState,
+            d3d: &mut RaylibMode3D<T>,
+            camera: &Camera3D,
+            tex: &Texture2D,
+            size: f32,
+            scale_y: f32,
+            color: Color,
+        ) {
             d3d.draw_billboard_rec(
-                camera,
+                *camera,
                 &tex,
                 Rectangle::new(
                     0.0,
-                    tex.height() as f32 * (1.0 - y_axis_scale),
+                    tex.height() as f32 * (1.0 - scale_y),
                     tex.width() as f32,
-                    tex.height() as f32 * y_axis_scale,
+                    tex.height() as f32 * scale_y,
                 ),
-                self.position() * Vector3::new(1.0, y_axis_scale, 1.0),
+                entity.position() * Vector3::new(1.0, scale_y, 1.0),
                 size,
                 color,
             );
-        };
+        }
 
         if self.collision_radius() > 0.0 {
             d3d.draw_circle_3D(
@@ -48,22 +54,63 @@ impl<T> Drawable<T> for Entity {
                 Color::GREEN,
             )
         }
-
         match self {
-            Entity::Start { .. } => {
-                draw_scaled_billboard(d3d, &assets.tex_start, 3.0, Color::new(255, 255, 255, 128))
+            Entity::Start { .. } => draw_billboard_yscaled(
+                self,
+                game,
+                d3d,
+                camera,
+                &assets.tex_start,
+                3.0,
+                y_axis_scale,
+                Color::new(255, 255, 255, 128),
+            ),
+            Entity::Rat { .. } => draw_billboard_yscaled(
+                self,
+                game,
+                d3d,
+                camera,
+                &assets.tex_rat,
+                2.0,
+                y_axis_scale,
+                Color::WHITE,
+            ),
+            Entity::OpenGL { .. } => draw_billboard_yscaled(
+                self,
+                game,
+                d3d,
+                camera,
+                &assets.tex_opengl,
+                3.0,
+                y_axis_scale,
+                Color::new(255, 255, 255, 154),
+            ),
+            Entity::End { .. } => draw_billboard_yscaled(
+                self,
+                game,
+                d3d,
+                camera,
+                &assets.tex_smiley,
+                3.0,
+                y_axis_scale,
+                Color::new(255, 255, 255, 128),
+            ),
+            Entity::Dodecahedron { position, .. } => {
+                d3d.draw_model_ex(
+                    &assets.model_dodecahedron,
+                    position,
+                    Vector3::one(),
+                    -40.0 * game.clock as f32,
+                    Vector3::one(),
+                    Color::WHITE,
+                );
             }
-            Entity::Rat { .. } => draw_scaled_billboard(d3d, &assets.tex_rat, 2.0, Color::WHITE),
-            Entity::OpenGL { .. } => {
-                draw_scaled_billboard(d3d, &assets.tex_opengl, 3.0, Color::new(255, 255, 255, 154))
-            }
-            Entity::End { .. } => draw_scaled_billboard(d3d, &assets.tex_smiley, 3.0, Color::new(255, 255, 255, 128)),
         }
     }
 }
 
 impl<T> Drawable<T> for Map<2> {
-    fn draw(&self, game: &GameState, d3d: &mut RaylibMode3D<T>, _camera: Camera3D, texture: &AssetPack) {
+    fn draw(&self, game: &GameState, d3d: &mut RaylibMode3D<T>, _camera: &Camera3D, texture: &AssetPack) {
         //let wall_height = game.game_time.min(1.0) as f32 * TILE_SIZE;
         let wall_height = TILE_SIZE
             * if let Some(e) = &game.game_start_event {
