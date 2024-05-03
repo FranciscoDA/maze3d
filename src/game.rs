@@ -12,9 +12,10 @@ use raylib::prelude::*;
 pub struct GameState {
     pub map: Map<2>,
     pub entities: EntityManager,
+    player_id: usize,
 
     pub clock: f64,
-    pub player_position: Vector3,
+    //pub player_position: Vector3,
     pub camera_rotation: Matrix,
 
     pub game_start_event: Option<GameEventType>,
@@ -101,20 +102,22 @@ impl GameState {
             TILE_SIZE / 2.0,
             start_row as f32 * TILE_SIZE,
         ) + map_offset;
+        let player_id = entities.generate_id();
+        entities.add(Entity::Player { id: player_id, position: player_position });
+
         let camera_rotation = Matrix::rotate_y(unsafe {
             atan2f(
                 player_position.x - start_banner.position().x,
                 start_banner.position().z - player_position.z,
             )
         });
-
         entities.add(start_banner);
         entities.add(end_banner);
 
         return Self {
             map,
             entities,
-            player_position,
+            player_id,
             camera_rotation,
             clock,
             game_start_event: Some(GameEventType::GameStart {
@@ -137,5 +140,17 @@ impl GameState {
                 self.game_end_event.take();
             }
         }
+    }
+
+    pub fn player(&self) -> &Entity {
+        return self.entities.get_by_id(self.player_id).unwrap()
+    }
+
+    pub fn player_mut(&mut self) -> &mut Entity {
+        return self.entities.get_mut_by_id(self.player_id).unwrap()
+    }
+
+    pub fn set_clock(&mut self, new_clock: f64) {
+        self.clock = new_clock;
     }
 }

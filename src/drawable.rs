@@ -46,13 +46,18 @@ impl<T> Drawable<T> for Entity {
         }
 
         if self.collision_radius() > 0.0 {
-            d3d.draw_circle_3D(
-                Vector3::new(self.position().x, 0.1, self.position().z),
-                self.collision_radius(),
-                Vector3::right(),
-                90.0,
-                Color::GREEN,
-            )
+            match self {
+                Entity::Player { .. } => {},
+                _ => {
+                    d3d.draw_circle_3D(
+                        Vector3::new(self.position().x, 0.1, self.position().z),
+                        self.collision_radius(),
+                        Vector3::right(),
+                        90.0,
+                        Color::GREEN,
+                    );
+                }
+            }
         }
         match self {
             Entity::Start { .. } => draw_billboard_yscaled(
@@ -104,7 +109,8 @@ impl<T> Drawable<T> for Entity {
                     Vector3::one(),
                     Color::WHITE,
                 );
-            }
+            },
+            Entity::Player { .. } => {},
         }
     }
 }

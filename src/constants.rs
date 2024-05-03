@@ -8,8 +8,6 @@ pub const MOUSE_SENSITIVITY: f32 = 0.05;
 
 pub const TILE_SIZE: f32 = 3.5;
 
-pub const PLAYER_RADIUS: f32 = 0.5;
-
 pub const PLAYER_SPEED: f32 = 0.2;
 pub const PLAYER_WALK_SPEED: f32 = 0.1;
 pub const PLAYER_SPRINT_SPEED: f32 = 0.3;

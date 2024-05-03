@@ -8,11 +8,12 @@ pub mod events;
 pub mod game;
 pub mod input;
 pub mod map;
+pub mod camera;
 
 use crate::{
     assets::AssetPack,
     constants::{
-        MOUSE_SENSITIVITY, PI, PLAYER_RADIUS, PLAYER_SPEED, PLAYER_SPRINT_SPEED, PLAYER_WALK_SPEED, SCREEN_H, SCREEN_W,
+        MOUSE_SENSITIVITY, PI, PLAYER_SPEED, PLAYER_SPRINT_SPEED, PLAYER_WALK_SPEED, SCREEN_H, SCREEN_W,
         TARGET_FPS, TILE_SIZE,
     },
     debug_ui::{draw_debug_text, draw_xyz_indicator},
@@ -23,7 +24,8 @@ use crate::{
     input::InputController,
     map::{GetSetMap, WALL_EAST, WALL_NORTH, WALL_SOUTH, WALL_WEST},
 };
-use raylib::{ffi::asinf, prelude::*};
+use camera::{get_xz_plane_parallel_rotation_matrix, get_camera_rotation_matrix};
+use raylib::prelude::*;
 use std::ops::Mul;
 
 /// Raylib implements Rectangle::check_collision_circle_rec but it's bugged. Use this implementation instead
@@ -44,9 +46,11 @@ fn main() {
 
     let mut game = GameState::new(rl.get_time(), [5, 5]);
 
+    let player_position = game.player().position();
+
     let mut camera = raylib::camera::Camera3D::perspective(
-        game.player_position,
-        game.player_position + Vector3::forward().transform_with(game.camera_rotation),
+        player_position,
+        player_position + Vector3::forward().transform_with(game.camera_rotation),
         Vector3::up(),
         60.0,
     );
@@ -65,9 +69,11 @@ fn main() {
     while !rl.window_should_close() {
         game.clock = rl.get_time();
 
-        let camera_z_rotation_axis = Vector3::left().transform_with(game.camera_rotation);
-        let camera_z_rotation_angle =
-            unsafe { asinf(Vector3::forward().transform_with(game.camera_rotation).normalized().y) };
+        let (player_position, player_collision_radius, player_id) = {
+            let player = game.player();
+            (player.position(), player.collision_radius(), player.id())
+        };
+
         let mut translation_velocity = Vector3::zero();
 
         let player_input_enabed = game.game_start_event.as_ref().is_none()
@@ -81,30 +87,14 @@ fn main() {
         if player_input_enabed {
             translation_velocity += input
                 .get_movement_vector(&rl)
-                .transform_with(game.camera_rotation)
-                .transform_with(Matrix::rotate(camera_z_rotation_axis, -camera_z_rotation_angle))
-                .mul(Vector3::one() - Vector3::up())
+                .transform_with(get_xz_plane_parallel_rotation_matrix(game.camera_rotation))
                 .normalized()
                 .mul(input.get_move_speed_modifier(&rl, PLAYER_WALK_SPEED, PLAYER_SPEED, PLAYER_SPRINT_SPEED));
 
-            game.camera_rotation *= Matrix::rotate(Vector3::up(), input.get_turning_angle(&rl) * 0.1);
-
-            let vertical_rotation_axis = Vector3::left().transform_with(game.camera_rotation);
-            let vertical_rotation_angle = input.get_vertical_look_angle(&rl) * 0.05;
-
-            let old_up = Vector3::up().transform_with(game.camera_rotation);
-            game.camera_rotation *= Matrix::rotate(vertical_rotation_axis, vertical_rotation_angle);
-
-            // constrain vertical rotation to avoid spinning by looking up/down
-            let new_up = Vector3::up().transform_with(game.camera_rotation);
-            game.camera_rotation *= Matrix::rotate(
-                vertical_rotation_axis,
-                vertical_rotation_angle
-                    * if new_up.y < 0.05 && old_up.y - new_up.y != 0.0 {
-                        (new_up.y - 0.05) / (old_up.y - new_up.y)
-                    } else {
-                        0.0
-                    },
+            game.camera_rotation *= get_camera_rotation_matrix(
+                game.camera_rotation,
+                input.get_turning_angle(&rl) * 0.1,
+                input.get_vertical_look_angle(&rl) * 0.05
             );
         }
         input.last_mouse_position = rl.get_mouse_position();
@@ -112,16 +102,16 @@ fn main() {
         // detect collision vs walls and adjust velocity accordingly
         let mut colliding = false;
         {
-            let player_position2d = Vector2::new(game.player_position.x, game.player_position.z);
+            let player_position2d = Vector2::new(player_position.x, player_position.z);
             let translated_position = Vector2::new(
-                game.player_position.x + translation_velocity.x,
-                game.player_position.z + translation_velocity.z,
+                player_position.x + translation_velocity.x,
+                player_position.z + translation_velocity.z,
             );
             let translated_bb = Rectangle::new(
-                translated_position.x - PLAYER_RADIUS,
-                translated_position.y - PLAYER_RADIUS,
-                PLAYER_RADIUS * 2.0,
-                PLAYER_RADIUS * 2.0,
+                translated_position.x - player_collision_radius,
+                translated_position.y - player_collision_radius,
+                player_collision_radius * 2.0,
+                player_collision_radius * 2.0,
             );
             // find all nearby walls
             let mut walls = Vec::<Rectangle>::new();
@@ -181,7 +171,7 @@ fn main() {
                 let translation_velocity2d = Vector2::new(translation_velocity.x, translation_velocity.z);
                 let translated_position2d = player_position2d + translation_velocity2d;
                 if let Some(collision_point) =
-                    rec_circle_collision_point(&wall_bb, translated_position2d, PLAYER_RADIUS)
+                    rec_circle_collision_point(&wall_bb, translated_position2d, player_collision_radius)
                 {
                     colliding = true;
                     // find a vector to remove the player from the wall and add that to the velocity
@@ -191,7 +181,7 @@ fn main() {
                     );
                     let collision_edge_normal = (player_position2d - closest_point).normalized();
                     let correction = collision_edge_normal
-                        * (PLAYER_RADIUS - collision_edge_normal.dot(translated_position2d - collision_point));
+                        * (player_collision_radius - collision_edge_normal.dot(translated_position2d - collision_point));
                     translation_velocity.x += correction.x;
                     translation_velocity.z += correction.y;
                 }
@@ -227,9 +217,8 @@ fn main() {
         {
             let mut i = 0;
             while i < game.entities.len() {
+                let player_position2d = Vector2::new(player_position.x, player_position.z);
                 let e = game.entities.get_mut_by_index(i);
-
-                let player_position2d = Vector2::new(game.player_position.x, game.player_position.z);
                 let entity_position2d = Vector2::new(e.position().x, e.position().z);
 
                 let objects_colliding = e.collision_radius() > 0.0
@@ -237,8 +226,9 @@ fn main() {
                         entity_position2d,
                         e.collision_radius(),
                         player_position2d,
-                        PLAYER_RADIUS,
-                    );
+                        player_collision_radius,
+                    )
+                    && e.id() != player_id;
                 colliding |= objects_colliding;
                 match e {
                     Entity::End { .. } => {
@@ -271,9 +261,9 @@ fn main() {
             }
         }
 
-        game.player_position += translation_velocity;
-        camera.position = game.player_position;
-        camera.target = game.player_position + Vector3::forward().transform_with(game.camera_rotation);
+        game.player_mut().move_position(translation_velocity);
+        camera.position = game.player().position();
+        camera.target = game.player().position() + Vector3::forward().transform_with(game.camera_rotation);
         camera.up = Vector3::up()
             .transform_with(game.camera_rotation)
             .transform_with(Matrix::rotate(
@@ -303,8 +293,8 @@ fn main() {
                     )
                 });
                 d3d.draw_circle_3D(
-                    Vector3::new(game.player_position.x, 0.1, game.player_position.z),
-                    PLAYER_RADIUS,
+                    Vector3::new(game.player().position().x, 0.1, game.player().position().z),
+                    game.player().collision_radius(),
                     Vector3::right(),
                     90.0,
                     if colliding { Color::RED } else { Color::GREEN },

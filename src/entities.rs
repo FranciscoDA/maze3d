@@ -2,6 +2,7 @@ use raylib::prelude::*;
 use std::cmp::Ordering;
 
 pub enum Entity {
+    Player { id: usize, position: Vector3 },
     Start { id: usize, position: Vector3 },
     End { id: usize, position: Vector3 },
     Rat { id: usize, position: Vector3 },
@@ -12,7 +13,8 @@ pub enum Entity {
 impl Entity {
     pub fn id(&self) -> usize {
         match self {
-            Self::Start { id, .. }
+            Self::Player { id, .. }
+            | Self::Start { id, .. }
             | Self::End { id, .. }
             | Self::Rat { id, .. }
             | Self::OpenGL { id, .. }
@@ -22,7 +24,8 @@ impl Entity {
 
     pub fn position(&self) -> Vector3 {
         match self {
-            Self::Start { position, .. }
+            Self::Player {position, .. }
+            | Self::Start { position, .. }
             | Self::End { position, .. }
             | Self::Rat { position, .. }
             | Self::OpenGL { position, .. }
@@ -30,8 +33,24 @@ impl Entity {
         }
     }
 
+    pub fn set_position(&mut self, new_position: Vector3) {
+        match self {
+            Self::Player {position, .. }
+            | Self::Start { position, .. }
+            | Self::End { position, .. }
+            | Self::Rat { position, .. }
+            | Self::OpenGL { position, .. }
+            | Self::Dodecahedron { position, .. } => *position = new_position,
+        }
+    }
+
+    pub fn move_position(&mut self, displacement: Vector3) {
+        self.set_position(self.position() + displacement);
+    }
+
     pub fn collision_radius(&self) -> f32 {
         match self {
+            Self::Player { .. } => 0.5,
             Self::End { .. } => 1.2,
             Self::Dodecahedron { .. } => 1.2,
             _ => 0.0,
@@ -40,9 +59,9 @@ impl Entity {
 }
 
 pub struct EntityManager {
-    entities: Vec<Entity>,
+    pub entities: Vec<Entity>,
     id_sequence: usize,
-    draw_order: Vec<usize>,
+    draw_order: Vec<usize>, // indexes entities in the order they should be drawn to screen
 }
 
 fn update_index_after_removal(vec: &mut Vec<usize>, removed_index: usize) {
@@ -87,6 +106,13 @@ impl EntityManager {
         update_index_after_removal(&mut self.draw_order, index);
     }
 
+    pub fn get_by_id(&self, id: usize) -> Option<&Entity> {
+        if let Ok(i) = self.entities.binary_search_by_key(&id, |a| a.id()) {
+            return Some(&self.entities[i]);
+        }
+        return None;
+    }
+
     pub fn get_mut_by_id(&mut self, id: usize) -> Option<&mut Entity> {
         if let Ok(i) = self.entities.binary_search_by_key(&id, |a| a.id()) {
             return Some(&mut self.entities[i]);
@@ -105,7 +131,9 @@ impl EntityManager {
 
     pub fn add(&mut self, entity: Entity) {
         self.draw_order.push(self.entities.len());
-        self.entities.push(entity);
+        if let Err(i) = self.entities.binary_search_by_key(&entity.id(), |e| e.id()) {
+            self.entities.insert(i, entity);
+        }
     }
 
     pub fn sort_drawables_by<F>(&mut self, mut compare: F)
